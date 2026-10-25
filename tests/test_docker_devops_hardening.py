@@ -25,6 +25,7 @@ COMPOSE_FILES = [
 HOST_DOCKER_OVERLAY = ROOT / "docker" / "host-docker.yml"
 HOST_WORKSPACE_OVERLAY = ROOT / "docker" / "host-workspace.yml"
 HOST_NETWORK_OVERLAY = ROOT / "docker" / "host-network.yml"
+LLAMA_VULKAN_OVERLAY = ROOT / "docker" / "llama.vulkan.yml"
 TEST_DOCS = [
     ROOT / "tests" / "README.md",
     ROOT / "tests" / "TESTING_STANDARD.md",
@@ -116,6 +117,19 @@ def test_host_network_overlay_uses_host_namespace_without_port_mapping():
     assert "CHROMADB_PORT=${ODYSSEUS_HOST_NETWORK_CHROMADB_PORT:-8100}" in text
     assert "ODYSSEUS_CONTAINER_NETWORK_MODE=host" in text
     assert '--port "$${APP_PORT:-7011}"' in text
+
+
+def test_llama_vulkan_overlay_serves_internally_and_is_discovered():
+    overlay = yaml.safe_load(LLAMA_VULKAN_OVERLAY.read_text(encoding="utf-8"))
+    llama = overlay["services"]["llama"]
+
+    assert re.fullmatch(r"ghcr\.io/ggml-org/llama\.cpp:server-vulkan-b\d+@sha256:[0-9a-f]{64}", llama["image"])
+    assert "ports" not in llama
+    assert llama["devices"] == ["/dev/dri"]
+    assert "${LLAMA_MODELS_DIR:-llama-models}:/models" in llama["volumes"]
+    assert "llama-models" in overlay["volumes"]
+    assert "HF_HOME=/models" in llama["environment"]
+    assert "LLM_HOSTS=${LLM_HOSTS:-llama}" in overlay["services"]["odysseus"]["environment"]
 
 
 def test_docker_entrypoint_gates_socket_group_plumbing_on_explicit_opt_in():

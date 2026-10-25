@@ -1,0 +1,66 @@
+# Bundled llama.cpp model server (Vulkan). Enable by setting COMPOSE_FILE
+# in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker/llama.vulkan.yml
+#
+# Adds a `llama` service running llama-server on the internal compose
+# network. LLM_HOSTS puts it in Odysseus's discovery scan (llama-server's
+# default port 8080 is a scanned port): run Discover once from the local
+# model servers card in Settings and it saves http://llama:8080/v1 as an
+# endpoint. The port is not published to the host. If you set LLM_HOSTS
+# yourself, include `llama` in the list.
+#
+# The model is downloaded from Hugging Face on first start into the
+# `llama-models` volume (or a host directory set with LLAMA_MODELS_DIR), so
+# the first boot can take a while. Pick the model with LLAMA_MODEL (any GGUF
+# repo, `<user>/<repo>[:quant]`).
+#
+# Vulkan needs only /dev/dri on the host, with no ROCm/CUDA userspace, and
+# works on AMD and Intel GPUs, integrated ones included.
+#
+# Integrated GPUs share memory with the desktop. If llama-server takes all of
+# it the compositor can't allocate and the desktop session crashes. On those
+# machines keep part of the model on the CPU, e.g. for a 30-layer MoE model
+# on a 32 GB laptop:
+#   LLAMA_FIT=off
+#   LLAMA_GPU_LAYERS=all
+#   LLAMA_N_CPU_MOE=10
+#   LLAMA_NO_HOST=true
+# LLAMA_NO_HOST keeps those CPU-side weights out of Vulkan pinned memory,
+# which counts against the same GPU limit.
+services:
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-vulkan-b10818@sha256:d14e49d20a4baf070cedcafbf32388ab1ff809f52fb7ec950371fba01a13c0bd
+    devices:
+      - /dev/dri
+    volumes:
+      # Kept out of ./data: the odysseus entrypoint re-owns everything there.
+      - ${LLAMA_MODELS_DIR:-llama-models}:/models
+    environment:
+      # llama-server's -hf downloads go to the Hugging Face cache, under HF_HOME.
+      - HF_HOME=/models
+      - HF_TOKEN=${HF_TOKEN:-}
+      - LLAMA_ARG_HF_REPO=${LLAMA_MODEL:-unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL}
+      - LLAMA_ARG_CTX_SIZE=${LLAMA_CTX_SIZE:-16384}
+      - LLAMA_ARG_FLASH_ATTN=${LLAMA_FLASH_ATTN:-auto}
+      - LLAMA_ARG_FIT=${LLAMA_FIT:-on}
+      - LLAMA_ARG_N_GPU_LAYERS=${LLAMA_GPU_LAYERS:-auto}
+      - LLAMA_ARG_N_CPU_MOE=${LLAMA_N_CPU_MOE:-0}
+      - LLAMA_ARG_NO_HOST=${LLAMA_NO_HOST:-false}
+      # Odysseus calls llama-server from its backend, never from the browser,
+      # so no cross-origin access is needed.
+      - LLAMA_ARG_CORS_ORIGINS=localhost
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Covers the first-boot model download.
+      start_period: 30m
+    restart: unless-stopped
+
+  odysseus:
+    environment:
+      - LLM_HOSTS=${LLM_HOSTS:-llama}
+
+volumes:
+  llama-models:
